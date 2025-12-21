@@ -50,7 +50,11 @@ if (isset($_POST['action']) && $_POST['action'] === 'sync') {
 if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
     header('Content-Type: application/json');
 
-    $zk = new ZKTeco(DEFAULT_DEVICE_IP, DEFAULT_DEVICE_PORT);
+    // Use custom config if provided, otherwise use defaults
+    $deviceIp = $_POST['device_ip'] ?? DEFAULT_DEVICE_IP;
+    $devicePort = $_POST['device_port'] ?? DEFAULT_DEVICE_PORT;
+
+    $zk = new ZKTeco($deviceIp, $devicePort);
     $connected = $zk->connect();
 
     if ($connected) {
@@ -115,43 +119,50 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
         <div class="row mb-4">
             <div class="col-lg-8">
                 <div class="card sync-card">
-                    <div class="card-header bg-primary text-white">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>System Configuration</h5>
+                        <button id="saveConfigBtn" class="btn btn-sm btn-light">
+                            <i class="fas fa-save"></i> Save Settings
+                        </button>
                     </div>
                     <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-bordered config-table">
-                                <thead>
-                                    <tr>
-                                        <th><i class="fas fa-server me-1"></i>Setting</th>
-                                        <th><i class="fas fa-info-circle me-1"></i>Value</th>
-                                        <th><i class="fas fa-tag me-1"></i>Description</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td>Device IP</td>
-                                        <td><code><?php echo DEFAULT_DEVICE_IP; ?></code></td>
-                                        <td>ZKTeco F22 device IP address</td>
-                                    </tr>
-                                    <tr>
-                                        <td>Device Port</td>
-                                        <td><code><?php echo DEFAULT_DEVICE_PORT; ?></code></td>
-                                        <td>ZKTeco communication port</td>
-                                    </tr>
-                                    <tr>
-                                        <td>Cloud URL</td>
-                                        <td><code><?php echo CLOUD_BASE_URL; ?></code></td>
-                                        <td>Laravel API base URL</td>
-                                    </tr>
-                                    <tr>
-                                        <td>API Endpoint</td>
-                                        <td><code><?php echo str_replace(CLOUD_BASE_URL, '', CLOUD_URL); ?></code></td>
-                                        <td>Complete API endpoint with authentication</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <form id="configForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="deviceIp" class="form-label">
+                                            <i class="fas fa-network-wired me-1"></i>Device IP Address
+                                        </label>
+                                        <input type="text" class="form-control" id="deviceIp"
+                                               value="<?php echo DEFAULT_DEVICE_IP; ?>" required>
+                                        <div class="form-text">ZKTeco F22 device IP address</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="devicePort" class="form-label">
+                                            <i class="fas fa-plug me-1"></i>Device Port
+                                        </label>
+                                        <input type="number" class="form-control" id="devicePort"
+                                               value="<?php echo DEFAULT_DEVICE_PORT; ?>" required>
+                                        <div class="form-text">ZKTeco communication port (default: 4370)</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-12">
+                                    <div class="mb-3">
+                                        <label for="cloudUrl" class="form-label">
+                                            <i class="fas fa-cloud me-1"></i>Cloud API URL
+                                        </label>
+                                        <input type="url" class="form-control" id="cloudUrl"
+                                               value="<?php echo CLOUD_BASE_URL; ?>" required>
+                                        <div class="form-text">Laravel API base URL for attendance sync</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                        <div id="configStatus" class="alert" style="display: none;" role="alert"></div>
                     </div>
                 </div>
             </div>
@@ -248,10 +259,17 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
             btn.disabled = true;
 
+            // Get current configuration
+            const config = getCurrentConfig();
+            const formData = new URLSearchParams();
+            formData.append('action', 'test_connection');
+            formData.append('device_ip', config.deviceIp);
+            formData.append('device_port', config.devicePort);
+
             fetch('sync_ui.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'action=test_connection'
+                body: formData
             })
             .then(response => response.json())
             .then(data => {
@@ -375,11 +393,17 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
         }
 
         function refreshStatus() {
-            // Test device connection automatically
+            // Test device connection automatically with current config
+            const config = getCurrentConfig();
+            const formData = new URLSearchParams();
+            formData.append('action', 'test_connection');
+            formData.append('device_ip', config.deviceIp);
+            formData.append('device_port', config.devicePort);
+
             fetch('sync_ui.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'action=test_connection'
+                body: formData
             })
             .then(response => response.json())
             .then(data => updateDeviceStatus(data.success))
@@ -395,6 +419,77 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
             logContainer.innerHTML = '<div class="log-entry"><span class="text-info">[' +
                 new Date().toLocaleTimeString() + ']</span><span class="log-info"> Logs cleared</span></div>';
         }
+
+        // Configuration management
+        function saveConfiguration() {
+            const deviceIp = document.getElementById('deviceIp').value.trim();
+            const devicePort = document.getElementById('devicePort').value.trim();
+            const cloudUrl = document.getElementById('cloudUrl').value.trim();
+
+            // Basic validation
+            if (!deviceIp || !devicePort || !cloudUrl) {
+                showConfigStatus('Please fill in all fields', 'danger');
+                return;
+            }
+
+            // Save to localStorage
+            const config = {
+                deviceIp: deviceIp,
+                devicePort: parseInt(devicePort),
+                cloudUrl: cloudUrl
+            };
+
+            localStorage.setItem('zktecoConfig', JSON.stringify(config));
+            showConfigStatus('Configuration saved successfully!', 'success');
+
+            // Update UI to reflect saved values
+            setTimeout(() => {
+                hideConfigStatus();
+                refreshStatus();
+            }, 2000);
+        }
+
+        function loadConfiguration() {
+            const savedConfig = localStorage.getItem('zktecoConfig');
+            if (savedConfig) {
+                const config = JSON.parse(savedConfig);
+                document.getElementById('deviceIp').value = config.deviceIp || '<?php echo DEFAULT_DEVICE_IP; ?>';
+                document.getElementById('devicePort').value = config.devicePort || '<?php echo DEFAULT_DEVICE_PORT; ?>';
+                document.getElementById('cloudUrl').value = config.cloudUrl || '<?php echo CLOUD_BASE_URL; ?>';
+            }
+        }
+
+        function getCurrentConfig() {
+            const savedConfig = localStorage.getItem('zktecoConfig');
+            if (savedConfig) {
+                return JSON.parse(savedConfig);
+            }
+            return {
+                deviceIp: '<?php echo DEFAULT_DEVICE_IP; ?>',
+                devicePort: <?php echo DEFAULT_DEVICE_PORT; ?>,
+                cloudUrl: '<?php echo CLOUD_BASE_URL; ?>'
+            };
+        }
+
+        function showConfigStatus(message, type) {
+            const statusDiv = document.getElementById('configStatus');
+            statusDiv.className = `alert alert-${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+        }
+
+        function hideConfigStatus() {
+            document.getElementById('configStatus').style.display = 'none';
+        }
+
+        // Save configuration button handler
+        document.getElementById('saveConfigBtn').addEventListener('click', saveConfiguration);
+
+        // Load configuration on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfiguration();
+            refreshStatus();
+        });
     </script>
 </body>
 </html>
