@@ -71,6 +71,7 @@ foreach (array_slice($logs, 0, 5) as $i => $row) {
 
 $payload = [
     'device_ip' => $deviceIp,
+    'token'     => $secretToken,
     'data'      => $logs,
 ];
 
